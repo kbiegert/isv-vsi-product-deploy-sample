@@ -1,6 +1,10 @@
 # custom-cos-image-one-nic-vsi-sample
 
-This directory contains the sample terraform code to create a VSI Instance with custom image from a qcow2 image stored in the COS URL. 
+This directory contains the sample terraform code to create a Virtual Server Image (VSI) instance with a custom server image stored in qcow2 format in a Cloud Object Storage (COS) instance at a specified URL. 
+
+# Overview
+
+This scenario illustrates the process to take an existing virtual server image and make it available through the IBM Cloud catalog to a Virtual Private Cloud (VPC) using a Terraform template.
 
 # IBM Cloud IaaS Support
 You're provided free technical support through the IBM Cloud™ community and Stack Overflow, which you can access from the Support Center. The level of support that you select determines the severity that you can assign to support cases and your level of access to the tools available in the Support Center. Choose a Basic, Advanced, or Premium support plan to customize your IBM Cloud™ support experience for your business needs.
@@ -9,13 +13,80 @@ Learn more: https://www.ibm.com/cloud/support
 
 ## Prerequisites
 
-- Have access to [Gen 2 VPC](https://cloud.ibm.com/vpc-ext/).
-- The given VPC must have at least one subnet with one IP address unassigned in each subnet - the VSI will be assigned an IP Address in its primary network interface from the user provided subnet as the input.
-- Create a **Publicly Accessible** Cloud Object Storage (COS) Bucket and upload the qcow2 image using
-the methods described in _IBM COS getting started docs_ (https://test.cloud.ibm.com/docs/cloud-object-storage?topic=cloud-object-storage-getting-started). This qcow2 image will be used to create a
-custom image (https://cloud.ibm.com/docs/vpc?topic=vpc-managing-images) in the 
-customer account by the terraform script. It's recommended to delete the
-custom image after the VSI is created by terraform.
+1. Have access to a [Gen 2 VPC](https://cloud.ibm.com/vpc-ext/).
+   - The given VPC must have at least one subnet with one IP address unassigned in each subnet - the VSI will be assigned an IP Address in its primary network interface from the user provided subnet as the input.
+2. Select/prepare your VSI image.  For this example the VSI image should be stored in qcow2 format.  For help in preparing an image see https://cloud.ibm.com/docs/vpc?topic=vpc-planning-custom-images 
+   - Note: when importing an image into VPC, you must specify the operating system that your image is based on.  The allowable choices are:
+      - centos-7-amd64 
+      - centos-8-amd64 
+      - debian-10-amd64 
+      - debian-9-amd64 
+      - red-7-amd64 
+      - red-7-amd64-byol 
+      - red-8-amd64 
+      - red-8-amd64-byol 
+      - ubuntu-16-04-amd64 
+      - ubuntu-18-04-amd64 
+      - ubuntu-20-04-amd64 
+      - windows-2012-amd64 
+      - windows-2012-amd64-byol 
+      - windows-2012-r2-amd64 
+      - windows-2012-r2-amd64-byol 
+      - windows-2016-amd64 
+      - windows-2016-amd64-byol 
+      - windows-2019-amd64 
+      - windows-2019-amd64-byol
+      
+   Choosing the Bring Your Own License (BYOL) Redhat or Windows images will avoid IBM billing and licensing for the image.
+   
+4. Create a **Publicly Accessible** Cloud Object Storage (COS) Bucket and upload your VSI qcow2 image using
+the methods described in [IBM COS getting started docs](https://test.cloud.ibm.com/docs/cloud-object-storage?topic=cloud-object-storage-getting-started). This qcow2 image will be used to create a custom image (https://cloud.ibm.com/docs/vpc?topic=vpc-managing-images) in the customer account by the 
+terraform script. Note: It's recommended to delete the custom image after the VSI is created by terraform.
+
+5. Test your image.  To verify that your image works in the VPC environment, you can create a VSI directly using your imported custom image.  A basic test would be to ensure that the VSI goes to a Running state and that you can ping and ssh into the VSI.  Beyond that, your testing would be specific to the solution that you are bringing into IBM Cloud.
+This documentation is a good starting point to guide you through VSI creation: https://cloud.ibm.com/docs/vpc?topic=vpc-about-advanced-virtual-servers
+
+6. Publish your image.  When you are ready to make you image publicly available you will need to import your image into every region that you want your solution to be available.  One way to do this is to use an API with the 'curl' command and POST to the region endpoint.  A benefit of this is that it allows you to use a single COS bucket as the source to each region import.  Note that you should ensure that the **image name** is unique and the same across all regions.
+Record the image id returned for each image from the response of the API call.  Images are regional, so each region will have a different image id.
+
+   Example:
+   ```
+   curl -X POST -k -Ss "<region endpoint>/v1/images?generation=2&version=2021-02-26" -H "Authorization: Bearer <IAM token>"  -d '{ "name": "myimage", "file": {"href": "cos://us-south/my-bucket/myimage.qcow2"}, "operating_system": { "name": "centos-8-amd64"} } '  |  jq .
+   ```
+   
+   Example Response:
+  ```json
+  {
+       "id": "r134-e2a3594d-eef0-4e20-bbcb-d9ca8a2fc9fa",
+       "crn": "crn:v1:staging:public:is:us-south:a/<removed>::image:r134-e2a3594d-eef0-4e20-bbcb-d9ca8a2fc9fa",
+       "href": "https://us-south-genesis-test02.iaasdev.cloud.ibm.com/v1/images/r134-e2a3594d-eef0-4e20-bbcb-d9ca8a2fc9fa",
+       "name": "myimage",
+       "resource_group": {
+           "id": "<removed>",
+           "href": "https://resource-controller.test.cloud.ibm.com/v1/resource_groups/<removed>"
+       },
+       "created_at": "2021-02-26T15:19:08Z",
+       "file": {},
+       "operating_system": {
+           "href": "https://us-south-genesis-test02.iaasdev.cloud.ibm.com/v1/operating_systems/centos-8-amd64",
+           "name": "centos-8-amd64",
+           "architecture": "amd64",
+           "display_name": "CentOS 8.x - Minimal Install (amd64)",
+           "family": "CentOS",
+           "vendor": "CentOS",
+           "version": "8.x - Minimal Install",
+           "dedicated_host_only": false
+       },
+       "status": "pending",
+       "visibility": "private",
+       "encryption": "none",
+       "status_reasons": []
+  }
+  ```
+  
+You now have private images in each desired region.  In order to provision a VSI using the image, the image id needs to be known.     
+  
+
 
 ## Costs
 
